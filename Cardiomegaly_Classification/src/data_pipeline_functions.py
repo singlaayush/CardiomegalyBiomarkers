@@ -38,14 +38,33 @@ def dfCleaning(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def dfCleaningNoIDP(df: pd.DataFrame) -> pd.DataFrame:
+    '''Apply Mimic specific replacement functions to dataframe
+
+    :param df: Datframe to adjust
+    :type df: pd.DataFrame
+    :return: Adjusted dataframe
+    :rtype: pd.DataFrame
+    '''
+    
+    # Map Positive and negative values to 0 for negative and 1 for positive
+    df.replace({'Negative': 0, 'Positive': 1}, inplace=True)
+
+    # Remove the .dicom from the file paths and replace with .jpg
+    df['path'] = df.apply(lambda row: os.path.splitext(row['path'])[0], axis=1)
+    df['path'] = df['path'].astype(str) + '.jpg'
+
+    return df
+
+
 def x_ray_dataframe_generator(
     label: str,
-    view: str,
     df_cxr_records: pd.DataFrame,
     df_nb: pd.DataFrame,
     df_cx: pd.DataFrame,
     df_cxr_meta_data: pd.DataFrame,
     df_split: pd.DataFrame,
+    view: str = None,
 ) -> pd.DataFrame:
     '''Generating a dataframe containing X-ray studies which are available in MIMIC-CXR by merging and filtering
 
@@ -125,12 +144,134 @@ def x_ray_dataframe_generator(
             ]
         )
     ]
-    df_combined_filtered = df_combined_filtered.loc[
-        df_combined_filtered['ViewPosition'] == view
-    ]
+
+    if view:
+        df_combined_filtered = df_combined_filtered.loc[
+            df_combined_filtered['ViewPosition'] == view
+        ]
 
     return df_combined_filtered
 
+
+def x_ray_dataframe_generator_v2(
+    labels: List,
+    df_cxr_records: pd.DataFrame,
+    df_nb: pd.DataFrame,
+    df_cx: pd.DataFrame,
+    df_cxr_meta_data: pd.DataFrame,
+    df_split: pd.DataFrame,
+    view: str = None,
+) -> pd.DataFrame:
+    '''Generating a dataframe containing X-ray studies which are available in \
+        MIMIC-CXR by merging and filtering
+    This does NOT filter the df such that it contains only Positive or \
+        Negative labels to ensure multi-label support.
+
+    :param labels: List of Disease columns to keep
+    :type labels: List
+    :param view: X-Ray view to filter for
+    :type view: str
+    :param df_cxr_records: Dataframe with paths for each CXR file
+    :type df_cxr_records: pd.DataFrame
+    :param df_nb: Dataframe with negbio labels
+    :type df_nb: pd.DataFrame
+    :param df_cx: Dataframe with chexpert labels
+    :type df_cx: pd.DataFrame
+    :param df_cxr_meta_data: Dataframe containing meta data info
+    :type df_cxr_meta_data: pd.DataFrame
+    :param df_split: Dataframe containing info about test and train split
+    :type df_split: pd.DataFrame
+    :return: Merged and filtered dataframe
+    :rtype: pd.DataFrame
+    '''
+    # Prep cheexpert and negbio
+    ## Merge chexpert with negbio
+    df_cxnb_v2 = df_nb.merge(
+        df_cx.drop('subject_id', axis=1),
+        how='left',
+        left_on='study_id',
+        right_on='study_id',
+        suffixes=('', '_cx'),
+    )
+    # Merge df_cxnb with df_split to add the 'split' column to df_cxnb
+    df_split_unique = df_split.drop_duplicates(subset='study_id')
+    df_cxnb_v2 = df_cxnb_v2.merge(
+        df_split_unique[['study_id', 'split']], on='study_id', how='inner'
+    )
+
+    # Create an empty list to store filtered dataframes
+    filtered_dfs = []
+    for label in labels:
+        c_cx = f'{label}_cx'  # CheXpert label column
+        # Identify disagreement and uncertainty
+        idx1 = df_cxnb_v2[label].isnull() & df_cxnb_v2[c_cx].notnull()
+        idx2 = df_cxnb_v2[label].notnull() & df_cxnb_v2[c_cx].isnull()
+        idx3 = (
+            df_cxnb_v2[label].notnull()
+            & df_cxnb_v2[c_cx].notnull()
+            & (df_cxnb_v2[label] != df_cxnb_v2[c_cx])
+        )
+        df_cxnb_v2.loc[(idx1 | idx2 | idx3), label] = -9
+        # Annotate
+        labels_map = {
+            0: 'Negative', 
+            1: 'Positive', 
+            -1: 'Uncertain', 
+            -9: 'Disagreement'
+        }
+        df_cxnb_v2[label] = df_cxnb_v2[label].map(labels_map)
+        # Prepare filtered dataframe
+        df_cxnb_train_red_v2 = df_cxnb_v2[
+            ['subject_id', 'study_id', 'split', label]
+        ]
+        # Append filtered dataframe to the list
+        filtered_dfs.append(df_cxnb_train_red_v2)
+
+    # Prep meta and records
+    ## Merge meta with records
+    df_meta_records_v2 = df_cxr_meta_data[
+        [
+            'dicom_id',
+            'subject_id',
+            'study_id',
+            'StudyDate',
+            'StudyTime',
+            'ViewPosition',
+        ]
+    ].merge(
+        df_cxr_records.drop(['study_id', 'subject_id'], axis=1),
+        on='dicom_id',
+        how='inner',
+    )
+
+    filtered_df = pd.concat(filtered_dfs, axis=1).drop(['subject_id'], axis=1)
+    filtered_df = filtered_df.loc[:, ~filtered_df.columns.duplicated()]
+
+    # Merge dataframes
+    df_combined_v2 = df_meta_records_v2.merge(
+        filtered_df, on='study_id', how='inner'
+    )
+
+    df_combined_v2 = df_combined_v2[
+        df_combined_v2.ViewPosition.isin(['AP','PA'])
+    ]
+
+    # Set other conditions to Negative if No Finding is Positive
+    # Step 1: Identify the condition where 'No Finding' is 'Positive'
+    condition = df_combined_v2['No Finding'] == 'Positive'
+    # Step 2: Find rows that meet this condition and have any value but \
+    # 'Positive' in the specified labels
+    null_condition = df_combined_v2.loc[condition, labels[1:]].ne('Positive')
+    # Step 3: Set these values to 'Negative'
+    df_combined_v2.loc[condition, labels[1:]] = df_combined_v2.loc[condition, labels[1:]].mask(null_condition, 'Negative')
+
+    # Remove all rows with 'Uncertain' or 'Disagreement' values from the df
+    #mask = ~df_combined_v2.apply(
+    #   lambda row: row.isin(['Uncertain', 'Disagreement']).any(), axis=1
+    #)
+    #df_combined_filtered_v2 = df_combined_v2[mask]
+
+    return df_combined_v2
 
 def filter_pd_read_chunkwise(
     file_path: str,
@@ -159,7 +300,6 @@ def filter_pd_read_chunkwise(
     )
 
     return filtered_df
-
 
 def icu_xray_matcher(
     label: str,
@@ -281,16 +421,16 @@ def icu_xray_matcher(
                 # Then check if that date falls in the specified range
                 if (
                     (
-                        (Date > ICUMatcherRow['EarlyBoundary']).bool()
-                        and (Date < ICUMatcherRow['intime']).bool()
+                        (Date > ICUMatcherRow['EarlyBoundary']).item()
+                        and (Date < ICUMatcherRow['intime']).item()
                     )
                     or (
-                        (Date > ICUMatcherRow['intime']).bool()
-                        and (Date < ICUMatcherRow['outtime']).bool()
+                        (Date > ICUMatcherRow['intime']).item()
+                        and (Date < ICUMatcherRow['outtime']).item()
                     )
                     or (
-                        (Date > ICUMatcherRow['PostGapStart']).bool()
-                        and (Date < ICUMatcherRow['PostGapStop']).bool()
+                        (Date > ICUMatcherRow['PostGapStart']).item()
+                        and (Date < ICUMatcherRow['PostGapStop']).item()
                     )
                 ):
 
@@ -322,9 +462,7 @@ def icu_xray_matcher(
                         CXRdates_in_range[x] - ICUMatcherRow['intime']
                     )  # Get the absolute values of time between
                     # X-ray and ICU admission
-                    TempDates = TempDates.astype(
-                        'timedelta64[D]'
-                    )  # need to convert the datatype
+                    TempDates = TempDates.dt.days  # in pandas v1; used .astype('timedelta64[D]') to convert the datatype
                     DaysAway.append(
                         TempDates.astype(int).values
                     )  # Add the value to the list
@@ -373,6 +511,183 @@ def icu_xray_matcher(
 
     return df_combined
 
+def SignalTableGeneratorNoIDP(
+    df_icu_xray: pd.DataFrame,
+    df_icu_timeseries: pd.DataFrame,
+    df_icu_lab: pd.DataFrame,
+    df_patients: pd.DataFrame,
+    df_admissions: pd.DataFrame,
+    chart_labels_mean: Dict[int, str],
+    chart_labels_max: Dict[int, str],
+    chart_labels_min: Dict[int, str],
+    lab_labels_mean: Dict[int, str],
+    lab_labels_max: Dict[int, str],
+    lab_labels_min: Dict[int, str],
+    average_by: str,
+) -> pd.DataFrame:
+    '''Average ICU data (vitals and labs) over a stay (or hour) and add it to the dataframe
+    with the linked X-ray study together with patient and admission data, plus image-extracted 
+    biomarker values
+
+    :param df_icu_xray: DataFrame to merge on
+    :type df_icu_xray: pd.DataFrame
+    :param df_icu_timeseries: ICU timeseries data
+    :type df_icu_timeseries: pd.DataFrame
+    :param df_icu_lab: Lab timeseries data
+    :type df_icu_lab: pd.DataFrame
+    :param df_patients: Patient info data
+    :type df_patients: pd.DataFrame
+    :param df_admissions: Admission data
+    :type df_admissions: pd.DataFrame
+    :param df_ctr: CTR values
+    :type df_ctr: pd.DataFrame
+    :param df_cpar: CPAR values
+    :type df_cpar: pd.DataFrame
+    :param chart_labels_mean: Labels
+    :type chart_labels_mean: Dict[int, str]
+    :param chart_labels_max: Labels
+    :type chart_labels_max: Dict[int, str]
+    :param chart_labels_min: Labels
+    :type chart_labels_min: Dict[int, str]
+    :param lab_labels_mean: Labels
+    :type lab_labels_mean: Dict[int, str]
+    :param lab_labels_max: Labels
+    :type lab_labels_max: Dict[int, str]
+    :param lab_labels_min: Labels
+    :type lab_labels_min: Dict[int, str]
+    :param average_by: Average bu Hourly or Stay
+    :type average_by: str
+    :return: Combined dataframe
+    :rtype: pd.DataFrame:
+    '''
+
+    # Prep df_icu_xray dataframe
+    df_icu_xray = df_icu_xray.drop_duplicates(subset=['path'])
+    df_icu_xray['intime'] = pd.to_datetime(df_icu_xray['intime'])
+    df_icu_xray['outtime'] = pd.to_datetime(df_icu_xray['outtime'])
+
+    # Merge the patient info and admission table
+    df_patient_admission = (
+        df_admissions[['subject_id', 'ethnicity']]
+        .drop_duplicates(subset=['subject_id'])
+        .merge(
+            df_patients[['subject_id', 'anchor_age', 'anchor_year', 'gender']].drop_duplicates(
+                subset=['subject_id']
+            ),
+            on='subject_id',
+            how='left',
+        )
+    )
+    
+    # Merge df_patient_admission onto df_icu_xray based on subject_id
+    df_icu_xray_patient_admission = df_icu_xray.merge(
+        df_patient_admission, how='left', on='subject_id'
+    )
+
+    # Compare year intime to anchor_year to find approximate admission age --> kept in 'anchor_age' column to avoid future conflicts
+    df_icu_xray_patient_admission['anchor_age'] = df_icu_xray_patient_admission['anchor_age'] + df_icu_xray_patient_admission['intime'].dt.year - df_icu_xray_patient_admission['anchor_year']
+        
+    df_icu_xray_patient_admission.drop(['anchor_year'],axis=1)
+    
+
+    # Prep timeseries tables
+
+    if average_by == 'Hourly':
+        df_icu_xray_patient_admission = explode_icu_stays(df_icu_xray_patient_admission)
+
+    ## Adjust timestamps
+    if average_by == 'Hourly':
+        df_icu_timeseries['charttime'] = pd.to_datetime(df_icu_timeseries['charttime'])
+        df_icu_lab['charttime'] = pd.to_datetime(df_icu_lab['charttime'])
+        df_icu_timeseries['charttime'] = df_icu_timeseries['charttime'].dt.round(
+            '60min'
+        )
+        df_icu_lab['charttime'] = df_icu_lab['charttime'].dt.round('60min')
+
+    ## Get matchers
+    if average_by == 'Hourly':
+        ChartUniqueMatcher = ['subject_id', 'charttime']
+        LabUniqueMatcher = ['subject_id', 'charttime']
+    elif average_by == 'Stay':
+        ChartUniqueMatcher = 'stay_id'
+        LabUniqueMatcher = 'hadm_id'
+
+    ## Create pivot tables from timeseries table for various aggregation levels and merge together
+    df_icu_timeseries_pivoted = create_pivot(
+        df=df_icu_timeseries,
+        labels=chart_labels_mean,
+        labels_column='itemid',
+        unique_matcher=ChartUniqueMatcher,
+        aggfunc='mean',
+        values='valuenum',
+    )
+    pivot_aux = create_pivot(
+        df=df_icu_timeseries,
+        labels=chart_labels_max,
+        labels_column='itemid',
+        unique_matcher=ChartUniqueMatcher,
+        aggfunc='max',
+        values='valuenum',
+    )
+    df_icu_timeseries_pivoted = df_icu_timeseries_pivoted.merge(
+        pivot_aux, how='outer', on=ChartUniqueMatcher
+    )
+    pivot_aux = create_pivot(
+        df=df_icu_timeseries,
+        labels=chart_labels_min,
+        labels_column='itemid',
+        unique_matcher=ChartUniqueMatcher,
+        aggfunc='min',
+        values='valuenum',
+    )
+    df_icu_timeseries_pivoted = df_icu_timeseries_pivoted.merge(
+        pivot_aux, how='outer', on=ChartUniqueMatcher
+    )
+    df_icu_lab_pivoted = create_pivot(
+        df=df_icu_lab,
+        labels=lab_labels_mean,
+        labels_column='itemid',
+        unique_matcher=LabUniqueMatcher,
+        aggfunc='mean',
+        values='valuenum',
+    )
+    pivot_aux = create_pivot(
+        df=df_icu_lab,
+        labels=lab_labels_max,
+        labels_column='itemid',
+        unique_matcher=LabUniqueMatcher,
+        aggfunc='max',
+        values='valuenum',
+    )
+    df_icu_lab_pivoted = df_icu_lab_pivoted.merge(
+        pivot_aux, how='outer', on=LabUniqueMatcher
+    )
+    pivot_aux = create_pivot(
+        df=df_icu_lab,
+        labels=lab_labels_min,
+        labels_column='itemid',
+        unique_matcher=LabUniqueMatcher,
+        aggfunc='min',
+        values='valuenum',
+    )
+    df_icu_lab_pivoted = df_icu_lab_pivoted.merge(
+        pivot_aux, how='outer', on=LabUniqueMatcher
+    )
+
+    # Merge the timeseries pivot tables onto the df_icu_xray_patient_admission table
+    df_icu_xray_patient_admission_timeseries = df_icu_xray_patient_admission.merge(
+        df_icu_timeseries_pivoted, how='left', on=ChartUniqueMatcher
+    )
+    df_icu_xray_patient_admission_timeseries_lab = (
+        df_icu_xray_patient_admission_timeseries.merge(
+            df_icu_lab_pivoted, how='left', on=LabUniqueMatcher
+        )
+    )
+
+    df_icu_xray_patient_admission_timeseries_lab.drop(labels='dicom_file', axis=1, inplace=True)
+
+    # return final output
+    return df_icu_xray_patient_admission_timeseries_lab
 
 def SignalTableGenerator(
     df_icu_xray: pd.DataFrame,
