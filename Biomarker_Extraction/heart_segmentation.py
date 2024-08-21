@@ -18,8 +18,8 @@ import os
 
 
 ## PATHS
-base_path = '../Biomarker Extraction/heart_segmentation/'
-save_path = '../Biomarker Extraction/heart_segmentation/'
+base_path = '../Biomarker_Extraction/heart_segmentation/'
+save_path = '../Biomarker_Extraction/heart_segmentation/'
 
 ## VARIABLES
 # data pre-processing

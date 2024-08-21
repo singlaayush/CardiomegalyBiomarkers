@@ -32,11 +32,11 @@ cxr_records_path = '../MIMIC/cxr-record-list.csv.gz'
 data_path = '../MIMIC/'  
 
 # paths for model loading
-heart_model_path = '../Biomarker Extraction/heart_segmentation/model.pt'
-lung_model_path = '../Biomarker Extraction/lung_segmentation/model.pt'
+heart_model_path = '../Biomarker_Extraction/heart_segmentation/model.pt'
+lung_model_path = '../Biomarker_Extraction/lung_segmentation/model.pt'
 
 # save_folder
-save_path = '../Biomarker Extraction/save_folder/CPAR/'
+save_path = '../Biomarker_Extraction/save_folder/CPAR/'
 
 # set device to GPU if avalible
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

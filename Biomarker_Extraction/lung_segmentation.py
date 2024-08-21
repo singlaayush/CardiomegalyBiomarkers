@@ -17,8 +17,8 @@ import math
 import os
 
 ## PATHS
-base_path = '../Biomarker Extraction/lung_segmentation/'
-save_path = '../Biomarker Extraction/lung_segmentation/'
+base_path = '../Biomarker_Extraction/lung_segmentation/'
+save_path = '../Biomarker_Extraction/lung_segmentation/'
 
 ## VARIABLES
 # data pre-processing

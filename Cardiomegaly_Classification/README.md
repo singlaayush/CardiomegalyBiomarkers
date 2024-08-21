@@ -1,4 +1,4 @@
-# Cardiomegaly Classification
+# Cardiomegaly_Classification
 
 -- CONTEXT: 
 
@@ -8,11 +8,11 @@ This folder contains code to train and use cardiomegaly classifiers using multim
 
 The last jupyter script, _DataPipeline.ipynb_, is a script needed to combine MIMIC-IV with MIMIV-CXR-JPG to create the multimodal dataset. It is essential to run this script before attempting the XGBoost and Image files. More information on our data methods, results, and analysis can be found in the papers listed in the usage notes section below. Please note that the first paper listed in the usage notes references another multimodal model, the script for this implementation is not available in this repo.
 
-These scripts use data sourced from 4 locations. The multimodal samples are generated from MIMIC-CXR-JPG, MIMIC-CXR, and MIMC-IV databases. In addition to these databases, biomarker values can be sourced from (LINK BIOMARKERS PAPER) or extracted using code found in the ./Biomarker Extraction/ folder of this repo. Links available below. 
+These scripts use data sourced from 4 locations. The multimodal samples are generated from MIMIC-CXR-JPG, MIMIC-CXR, and MIMC-IV databases. In addition to these databases, biomarker values can be sourced from (LINK BIOMARKERS PAPER) or extracted using code found in the ./Biomarker_Extraction/ folder of this repo. Links available below. 
 
 -- USAGE NOTES: 
 If using this code please cite
-- Multimodal Cardiomegaly Classification with Image-Derived Digital Biomarkers (https://doi.org/10.1007/978-3-031-12053-4_2)
+- Multimodal Cardiomegaly_Classification with Image-Derived Digital Biomarkers (https://doi.org/10.1007/978-3-031-12053-4_2)
 - LINK BIOMARKERS PAPER
 
 Please follow required file downloads and assumed file structure shown in main repo README file
