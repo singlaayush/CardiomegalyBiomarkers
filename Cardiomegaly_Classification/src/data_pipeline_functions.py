@@ -54,6 +54,45 @@ def dfCleaningNoIDP(df: pd.DataFrame) -> pd.DataFrame:
     df['path'] = df.apply(lambda row: os.path.splitext(row['path'])[0], axis=1)
     df['path'] = df['path'].astype(str) + '.jpg'
 
+    # Mapping of original ethnicities to standardized categories
+    ethnicity_mapping = {
+        "WHITE": "White",
+        "WHITE - OTHER EUROPEAN": "White",
+        "WHITE - RUSSIAN": "White",
+        "WHITE - EASTERN EUROPEAN": "White",
+        "WHITE - BRAZILIAN": "White",
+        "BLACK/AFRICAN AMERICAN": "Black",
+        "BLACK/CAPE VERDEAN": "Black",
+        "BLACK/CARIBBEAN ISLAND": "Black",
+        "BLACK/AFRICAN": "Black",
+        "ASIAN": "Asian",
+        "ASIAN - CHINESE": "Asian",
+        "ASIAN - SOUTH EAST ASIAN": "Asian",
+        "ASIAN - ASIAN INDIAN": "Asian",
+        "ASIAN - KOREAN": "Asian",
+        "HISPANIC/LATINO - PUERTO RICAN": "Hispanic/Latino",
+        "HISPANIC/LATINO - DOMINICAN": "Hispanic/Latino",
+        "HISPANIC/LATINO - GUATEMALAN": "Hispanic/Latino",
+        "HISPANIC/LATINO - SALVADORAN": "Hispanic/Latino",
+        "HISPANIC OR LATINO": "Hispanic/Latino",
+        "HISPANIC/LATINO - MEXICAN": "Hispanic/Latino",
+        "HISPANIC/LATINO - HONDURAN": "Hispanic/Latino",
+        "HISPANIC/LATINO - CUBAN": "Hispanic/Latino",
+        "HISPANIC/LATINO - COLUMBIAN": "Hispanic/Latino",
+        "HISPANIC/LATINO - CENTRAL AMERICAN": "Hispanic/Latino",
+        "SOUTH AMERICAN": "Hispanic/Latino",
+        "NATIVE HAWAIIAN OR OTHER PACIFIC ISLANDER": "Asian",
+        "AMERICAN INDIAN/ALASKA NATIVE": "Other",
+        "MULTIPLE RACE/ETHNICITY": "Other",
+        "OTHER": "Other",
+        "UNKNOWN": "Other",
+        "UNABLE TO OBTAIN": "Other",
+        "PATIENT DECLINED TO ANSWER": "Other",
+        "PORTUGUESE": "Other"
+    }
+
+    df['ethnicity'] = df['ethnicity'].map(ethnicity_mapping)
+
     return df
 
 
@@ -273,6 +312,7 @@ def x_ray_dataframe_generator_v2(
 
     return df_combined_v2
 
+
 def filter_pd_read_chunkwise(
     file_path: str,
     filter_col: str,
@@ -300,6 +340,7 @@ def filter_pd_read_chunkwise(
     )
 
     return filtered_df
+
 
 def icu_xray_matcher(
     label: str,
@@ -511,6 +552,140 @@ def icu_xray_matcher(
 
     return df_combined
 
+
+def icu_xray_matcher_v2(
+    labels: List,
+    days_before_icu: int,
+    xray_gap_after_icu: int,
+    xray_max_time_after_icu: int,
+    df_xray: pd.DataFrame,
+    df_icu_stays: pd.DataFrame,
+) -> pd.DataFrame:
+    '''Linking ICU stays to X-ray studies based on their dates
+    X-rays linked to ICU stays if they occurs up to 'days_before_icu' before admission, or
+    between 'xray_gap_after_icu' and 'xray_max_time_after_icu' days after ICU discharge
+
+    :param labels: list of disease columns
+    :type label: List
+    :param days_before_icu: Days before icu stay to consider for xray
+    :type days_before_icu: int
+    :param xray_gap_after_icu: Waiting period after ICU for xrays to consider
+    :type xray_gap_after_icu: int
+    :param xray_max_time_after_icu: Maximum days after icu stay to consider for xray
+    :type xray_max_time_after_icu: int
+    :param df_xray: Dataframe with xrays
+    :type df_xray: pd.DataFrame
+    :param df_icu_stays: Dataframe with icu stays
+    :type df_icu_stays: pd.DataFrame
+    :return: Combined dataframe
+    :rtype: pd.DataFrame
+    '''
+
+    # Filter for patients in ICU stays with x-rays
+    unique_full_patients = (
+        pd.merge(df_xray, df_icu_stays, on=['subject_id'], how='inner')
+        .drop_duplicates(subset=['subject_id'])['subject_id']
+        .reset_index(drop=True)
+        .tolist()
+    )
+
+    cxrOverlap = df_xray.loc[df_xray['subject_id'].isin(unique_full_patients), :]
+    icuOverlap = df_icu_stays.loc[
+        df_icu_stays['subject_id'].isin(unique_full_patients), :
+    ]
+
+    # Convert objects to datetime
+    icuOverlap['intime'] = pd.to_datetime(icuOverlap['intime'])
+    icuOverlap['outtime'] = pd.to_datetime(icuOverlap['outtime'])
+
+    # Initialize the matcher dataframe
+    ICUMatcher = icuOverlap[['stay_id', 'intime', 'outtime']].copy()
+    ICUMatcher['Match'] = 0
+    ICUMatcher['study_id'] = 0
+    for label in labels:
+        ICUMatcher[label] = 'Uncertain'
+    ICUMatcher['ViewPosition'] = ''
+    ICUMatcher['path'] = ''
+    ICUMatcher['EarlyBoundary'] = ICUMatcher['intime'] - datetime.timedelta(days=days_before_icu)
+    ICUMatcher['PostGapStart'] = ICUMatcher['outtime'] + datetime.timedelta(days=xray_gap_after_icu)
+    ICUMatcher['PostGapStop'] = ICUMatcher['PostGapStart'] + datetime.timedelta(days=xray_max_time_after_icu)
+
+    # Iterate through all of the subjects
+    for subid in unique_full_patients:
+        PatientCXR = cxrOverlap.loc[cxrOverlap['subject_id'] == subid].reset_index(drop=True)
+        PatientICU = icuOverlap.loc[icuOverlap['subject_id'] == subid].reset_index(drop=True)
+
+        # Iterate through CXR
+        CXRdates = []
+        CXRstudies = []
+        CXRlabels = {label: [] for label in labels}
+        CXRpaths = []
+        CXRview = []
+
+        for _, row in PatientCXR.iterrows():
+            date_temp = str(row['StudyDate'])
+            time_temp = str(row['StudyTime']).split('.')
+            if len(time_temp[0]) < 6:
+                time_temp[0] = '0' * (6 - len(time_temp[0])) + time_temp[0]
+            time_temp = '.'.join(time_temp)
+            time_aux = 'T'.join([date_temp, time_temp])
+            studytime = pd.to_datetime(time_aux)
+            CXRdates.append(studytime)
+            CXRstudies.append(row['study_id'])
+            for label in labels:
+                CXRlabels[label].append(row[label])
+            CXRpaths.append(row['path'])
+            CXRview.append(row['ViewPosition'])
+
+        # Iterate through the ICU Stays
+        for _, row in PatientICU.iterrows():
+            ICUMatcherRow = ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id']]
+            CXRs_in_range = []
+
+            for i in range(len(CXRdates)):
+                Date = CXRdates[i]
+                if (
+                    (Date > ICUMatcherRow['EarlyBoundary']).item()
+                    and (Date < ICUMatcherRow['intime']).item()
+                ) or (
+                    (Date > ICUMatcherRow['intime']).item()
+                    and (Date < ICUMatcherRow['outtime']).item()
+                ) or (
+                    (Date > ICUMatcherRow['PostGapStart']).item()
+                    and (Date < ICUMatcherRow['PostGapStop']).item()
+                ):
+                    CXRs_in_range.append(i)
+
+            if len(CXRs_in_range) > 0:
+                CXRdates_in_range = [CXRdates[i] for i in CXRs_in_range]
+                CXRlabels_in_range = {label: [CXRlabels[label][i] for i in CXRs_in_range] for label in labels}
+
+                DaysAway = []
+                for x in range(len(CXRdates_in_range)):
+                    TempDates = abs(CXRdates_in_range[x] - ICUMatcherRow['intime'])
+                    TempDates = TempDates.dt.days
+                    DaysAway.append(TempDates.astype(int).values)
+
+                TempIndex = DaysAway.index(min(DaysAway))
+                ChosenDate = CXRdates_in_range[TempIndex]
+                NearestIndex = CXRdates.index(ChosenDate)
+
+                ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id'], 'Match'] = 1
+                ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id'], 'study_id'] = CXRstudies[NearestIndex]
+                for label in labels:
+                    ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id'], label] = CXRlabels[label][NearestIndex]
+                ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id'], 'ViewPosition'] = CXRview[NearestIndex]
+                ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id'], 'path'] = CXRpaths[NearestIndex]
+
+    # Getting rid of non-matches
+    ICUMatcher = ICUMatcher.loc[ICUMatcher['Match'] == 1].reset_index(drop=True)
+    df_combined = icuOverlap.merge(
+        ICUMatcher.drop(['intime', 'outtime'], axis=1), how='right', on='stay_id'
+    )
+
+    return df_combined
+
+
 def SignalTableGeneratorNoIDP(
     df_icu_xray: pd.DataFrame,
     df_icu_timeseries: pd.DataFrame,
@@ -684,10 +859,9 @@ def SignalTableGeneratorNoIDP(
         )
     )
 
-    df_icu_xray_patient_admission_timeseries_lab.drop(labels='dicom_file', axis=1, inplace=True)
-
     # return final output
     return df_icu_xray_patient_admission_timeseries_lab
+
 
 def SignalTableGenerator(
     df_icu_xray: pd.DataFrame,
