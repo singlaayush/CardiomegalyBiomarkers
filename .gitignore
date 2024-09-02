@@ -1,3 +1,5 @@
 venv/
 MIMIC_features/
 __pycache__/
+ctr-cpar-cardiomegaly/
+Cardiomegaly_Classification/models/

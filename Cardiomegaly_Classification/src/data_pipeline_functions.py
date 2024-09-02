@@ -609,6 +609,8 @@ def icu_xray_matcher_v2(
     ICUMatcher['EarlyBoundary'] = ICUMatcher['intime'] - datetime.timedelta(days=days_before_icu)
     ICUMatcher['PostGapStart'] = ICUMatcher['outtime'] + datetime.timedelta(days=xray_gap_after_icu)
     ICUMatcher['PostGapStop'] = ICUMatcher['PostGapStart'] + datetime.timedelta(days=xray_max_time_after_icu)
+    ICUMatcher['StudyDate'] = 0
+    ICUMatcher['split'] = ''
 
     # Iterate through all of the subjects
     for subid in unique_full_patients:
@@ -621,6 +623,8 @@ def icu_xray_matcher_v2(
         CXRlabels = {label: [] for label in labels}
         CXRpaths = []
         CXRview = []
+        CXRStudyDates = []
+        CXRsplits = []
 
         for _, row in PatientCXR.iterrows():
             date_temp = str(row['StudyDate'])
@@ -636,6 +640,8 @@ def icu_xray_matcher_v2(
                 CXRlabels[label].append(row[label])
             CXRpaths.append(row['path'])
             CXRview.append(row['ViewPosition'])
+            CXRStudyDates.append(row['StudyDate'])
+            CXRsplits.append(row['split'])
 
         # Iterate through the ICU Stays
         for _, row in PatientICU.iterrows():
@@ -676,6 +682,8 @@ def icu_xray_matcher_v2(
                     ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id'], label] = CXRlabels[label][NearestIndex]
                 ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id'], 'ViewPosition'] = CXRview[NearestIndex]
                 ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id'], 'path'] = CXRpaths[NearestIndex]
+                ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id'], 'StudyDate'] = CXRStudyDates[NearestIndex]
+                ICUMatcher.loc[ICUMatcher.stay_id == row['stay_id'], 'split'] = CXRsplits[NearestIndex]
 
     # Getting rid of non-matches
     ICUMatcher = ICUMatcher.loc[ICUMatcher['Match'] == 1].reset_index(drop=True)

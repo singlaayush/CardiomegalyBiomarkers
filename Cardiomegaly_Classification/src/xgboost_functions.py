@@ -107,7 +107,7 @@ def test_xgboost(model, test, features):
     '''
     
     # make predictions on test set and make binary
-    preds_raw = model.predict(test[features], ntree_limit=model.best_ntree_limit)
+    preds_raw = model.predict(test[features])
     preds = [round(value) for value in preds_raw]
 
     # evaluate preductions
@@ -186,7 +186,7 @@ def train_test_xgboost(train_folds, val, valFoldNum, test, modalities_combinatio
 
 
         # get predictions and evaluate
-        [accuracy, auc_roc, f1, cf] = test_xgboost(model, test, combination[1])
+        [accuracy, auc_roc, f1, cf] = test_xgboost(model, test, combination[0])
         results.append([combination[1], accuracy, auc_roc, f1, cf])
 
     # return results of all modality combinations tested
