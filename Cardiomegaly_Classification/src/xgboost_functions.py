@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from xgboost import XGBClassifier, callback
 from sklearn.metrics import accuracy_score, confusion_matrix, roc_auc_score, f1_score
-
+from sklearn.impute import SimpleImputer
 
 def SplitData(df, splitFracs, class_col = 'class'):
     '''Split dataframe into smaller subsets which keep constant ratio of postive/negative samples. 
@@ -121,7 +121,7 @@ def test_xgboost(model, test, features):
 
 
 
-def train_test_xgboost(train_folds, val, valFoldNum, test, modalities_combinations, model_params, model_path, lossFigure, exportModels):
+def train_test_xgboost(train_folds, val, valFoldNum, test, modalities_combinations, model_params, model_path, lossFigure, exportModels, select_col_groups=None, impute=False):
     '''Train xgboost models on train_folds with validaiotn set val, for differnt modality combinations. Then, if requested, 
     export loss figure and models to model_path folder. Subsequentally test model on test set and return DataFrame of summary
     performance scores.
@@ -151,6 +151,14 @@ def train_test_xgboost(train_folds, val, valFoldNum, test, modalities_combinatio
 
     # combine training folds into single training set
     train = pd.concat(train_folds, axis=0).reset_index(drop=True)
+
+    # Mean Imputation for NaNs in train set if desired
+    if impute:
+        imputer = SimpleImputer(strategy='mean')
+        imputed_df = pd.DataFrame(imputer.fit_transform(train[select_col_groups]), columns=select_col_groups)
+        train[select_col_groups] = imputed_df[select_col_groups].values
+        test_imputed_df = pd.DataFrame(imputer.transform(test[select_col_groups]), columns=select_col_groups)
+        test[select_col_groups] = test_imputed_df[select_col_groups].values
 
     results = []
     for _, combination in enumerate(modalities_combinations):
