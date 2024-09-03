@@ -98,12 +98,12 @@ def dfCleaningNoIDP(df: pd.DataFrame) -> pd.DataFrame:
 
 def x_ray_dataframe_generator(
     label: str,
+    view: str,
     df_cxr_records: pd.DataFrame,
     df_nb: pd.DataFrame,
     df_cx: pd.DataFrame,
     df_cxr_meta_data: pd.DataFrame,
     df_split: pd.DataFrame,
-    view: str = None,
 ) -> pd.DataFrame:
     '''Generating a dataframe containing X-ray studies which are available in MIMIC-CXR by merging and filtering
 
@@ -183,11 +183,9 @@ def x_ray_dataframe_generator(
             ]
         )
     ]
-
-    if view:
-        df_combined_filtered = df_combined_filtered.loc[
-            df_combined_filtered['ViewPosition'] == view
-        ]
+    df_combined_filtered = df_combined_filtered.loc[
+        df_combined_filtered['ViewPosition'] == view
+    ]
 
     return df_combined_filtered
 

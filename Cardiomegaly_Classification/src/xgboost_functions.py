@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from xgboost import XGBClassifier, callback
 from sklearn.metrics import accuracy_score, confusion_matrix, roc_auc_score, f1_score
 from sklearn.impute import SimpleImputer
+import numpy as np
 
 def SplitData(df, splitFracs, class_col = 'class'):
     '''Split dataframe into smaller subsets which keep constant ratio of postive/negative samples. 
@@ -51,7 +52,69 @@ def SplitData(df, splitFracs, class_col = 'class'):
 
     return split_list
 
+def SplitDataCorrectly(df, splitFracs, class_col='class', subject_col='subject_id', random_seed=42):
+    '''Split dataframe into smaller subsets which keep constant ratio of positive/negative samples,
+    while ensuring that all samples with the same subject_id are in the same subset.
+    
+    :param df: DataFrame to split
+    :type df: pd.DataFrame
+    :param splitFracs: List of floats which sum to 1, representing the relative size of subsets (splits)
+    :type splitFracs: list
+    :param class_col: String to indicate which column defines binary classification, default - 'class'
+    :type class_col: string
+    :param subject_col: String to indicate which column defines the subject ID, default - 'subject_id'
+    :type subject_col: string
+    :param random_seed: Integer to set the random seed for reproducibility, default is None
+    :type random_seed: int, optional
+    
+    :return: List of DataFrames of subsets
+    :rtype: list of length len(splitFracs)
+    '''
 
+    # Set the random seed if provided
+    if random_seed is not None:
+        np.random.seed(random_seed)
+
+    # Shuffle the dataframe randomly
+    df = df.sample(frac=1, random_state=random_seed).reset_index(drop=True)
+
+    # Calculate the target number of samples for each split
+    total_samples = len(df)
+    target_sizes = [int(frac * total_samples) for frac in splitFracs]
+
+    # Group by subject_id
+    groups = df.groupby(subject_col)
+
+    # Initialize lists to store the splits
+    splits = [[] for _ in range(len(splitFracs))]
+    split_class_counts = np.zeros((len(splitFracs), 2))  # Track (class0, class1) counts per split
+    split_sizes = np.zeros(len(splitFracs))  # Track the number of samples in each split
+
+    # Iterate through each group and assign to a split
+    for _, group in groups:
+        # Count the number of positive and negative samples in the group
+        num_class1 = group[class_col].sum()
+        num_class0 = len(group) - num_class1
+
+        # Calculate the best split for this group based on target size and class balance
+        split_scores = [
+            (target_sizes[i] - split_sizes[i]) - abs(
+                (split_class_counts[i, 1] + num_class1) / (split_sizes[i] + len(group) + 1e-10) - sum(splitFracs)
+            )
+            for i in range(len(splitFracs))
+        ]
+        target_split = np.argmax(split_scores)
+
+        # Assign group to the chosen split
+        splits[target_split].append(group)
+        split_class_counts[target_split, 0] += num_class0
+        split_class_counts[target_split, 1] += num_class1
+        split_sizes[target_split] += len(group)
+
+    # Concatenate groups within each split and shuffle
+    final_splits = [pd.concat(split).sample(frac=1, random_state=random_seed).reset_index(drop=True) for split in splits]
+
+    return final_splits
 
 def get_xgboost(feature_type, model_params):
     '''retreive model skeleton in form of xgboost.XGBClassifier object with model_param features 
