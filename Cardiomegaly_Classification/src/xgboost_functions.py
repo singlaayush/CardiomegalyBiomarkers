@@ -1,7 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 from xgboost import XGBClassifier, callback
-from sklearn.metrics import accuracy_score, confusion_matrix, roc_auc_score, f1_score
+from sklearn.metrics import accuracy_score, confusion_matrix, roc_auc_score, f1_score, matthews_corrcoef, average_precision_score
 from sklearn.impute import SimpleImputer
 import numpy as np
 
@@ -173,13 +173,20 @@ def test_xgboost(model, test, features):
     preds_raw = model.predict(test[features])
     preds = [round(value) for value in preds_raw]
 
+    auc_roc = roc_auc_score(list(test['class']), preds_raw)
+    avg_precision = average_precision_score(list(test['class']), preds_raw)
+
     # evaluate preductions
     accuracy = accuracy_score(list(test['class']), preds)
-    cf = confusion_matrix(list(test['class']), preds)
-    auc_roc = roc_auc_score(list(test['class']), preds)
+    cm = confusion_matrix(list(test['class']), preds)
     f1 = f1_score(list(test['class']), preds)
+    tpr = cm[1, 1] / (cm[1, 1] + cm[1, 0]) if (cm[1, 1] + cm[1, 0]) > 0 else 0  # Sensitivity, Recall
+    tnr = cm[0, 0] / (cm[0, 0] + cm[0, 1]) if (cm[0, 0] + cm[0, 1]) > 0 else 0  # Specificity
+    ppv = cm[1, 1] / (cm[1, 1] + cm[0, 1]) if (cm[1, 1] + cm[0, 1]) > 0 else 0  # Precision
+    npv = cm[0, 0] / (cm[0, 0] + cm[1, 0]) if (cm[0, 0] + cm[1, 0]) > 0 else 0  # Negative Predictive Value
+    mcc = matthews_corrcoef(list(test['class']), preds)
 
-    return accuracy, auc_roc, f1, cf
+    return accuracy, auc_roc, f1, cm, avg_precision, tpr, tnr, ppv, npv, mcc
 
 
 
@@ -257,10 +264,10 @@ def train_test_xgboost(train_folds, val, valFoldNum, test, modalities_combinatio
 
 
         # get predictions and evaluate
-        [accuracy, auc_roc, f1, cf] = test_xgboost(model, test, combination[0])
-        results.append([combination[1], accuracy, auc_roc, f1, cf])
+        [accuracy, auc_roc, f1, cf, avg_precision, tpr, tnr, ppv, npv, mcc] = test_xgboost(model, test, combination[0])
+        results.append([combination[1], accuracy, auc_roc, f1, cf, avg_precision, tpr, tnr, ppv, npv, mcc])
 
     # return results of all modality combinations tested
-    results_df = pd.DataFrame(results, columns=['Modalities', 'Accuracy', 'ROC AUC', 'F1 score','Confusion Matrix']).set_index('Modalities')
+    results_df = pd.DataFrame(results, columns=['Modalities', 'Accuracy', 'ROC AUC', 'F1 score','Confusion Matrix', 'Average Precision', 'TPR', 'TNR', 'PPV', 'NPV', 'MCC']).set_index('Modalities')
 
     return results_df
