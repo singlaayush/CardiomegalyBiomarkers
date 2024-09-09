@@ -264,6 +264,8 @@ def train_test_xgboost(train_folds, val, valFoldNum, test, modalities_combinatio
 
 
         # get predictions and evaluate
+        [val_accuracy, val_auc_roc, val_f1, val_cf, val_avg_precision, val_tpr, val_tnr, val_ppv, val_npv, val_mcc] = test_xgboost(model, val, combination[0])
+        print(f'Val MCC for {combination[1]}: {val_mcc}')
         [accuracy, auc_roc, f1, cf, avg_precision, tpr, tnr, ppv, npv, mcc] = test_xgboost(model, test, combination[0])
         results.append([combination[1], accuracy, auc_roc, f1, cf, avg_precision, tpr, tnr, ppv, npv, mcc])
 
